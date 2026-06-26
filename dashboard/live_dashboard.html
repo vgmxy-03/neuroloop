@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Muse Live — OpenBCI-style</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:#0d1117; --bg2:#161b22; --bg3:#1c2128;
+  --border:#30363d; --border2:#21262d;
+  --text:#e6edf3; --muted:#8b949e;
+  --blue:#58a6ff; --green:#3fb950; --yellow:#d29922;
+  --red:#f85149; --orange:#f97316; --purple:#bc8cff; --cyan:#39d353;
+}
+body { background:var(--bg); color:var(--text); font-family:'SF Mono','Fira Code',monospace; font-size:12px; }
+
+/* ── header ── */
+header { display:flex; align-items:center; gap:12px; padding:9px 16px;
+  background:var(--bg2); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:10; }
+header h1 { font-size:13px; font-weight:700; color:var(--blue); }
+#status-dot { width:8px; height:8px; border-radius:50%; background:#484f58; flex-shrink:0; }
+#status-dot.live { background:var(--green); box-shadow:0 0 5px var(--green); }
+.hdr-sep { color:var(--border); }
+#sr-badge,#status-label { color:var(--muted); font-size:10px; }
+.hdr-right { margin-left:auto; display:flex; align-items:center; gap:10px; }
+#batt-label { color:var(--muted); font-size:11px; }
+#bpm-badge { padding:2px 7px; border-radius:10px; background:#1f2937; color:var(--orange); font-size:11px; font-weight:700; }
+#touch-badge { padding:2px 6px; border-radius:10px; font-size:10px; background:#1f2937; color:var(--muted); }
+#touch-badge.on { background:#1a3a1a; color:var(--green); }
+.q-row { display:flex; gap:5px; }
+.q-ch { font-size:10px; color:var(--muted); display:flex; align-items:center; gap:3px; }
+.q-dot { width:8px; height:8px; border-radius:50%; background:#484f58; transition:background .3s; }
+.q-dot.q1{background:var(--green)} .q-dot.q2{background:var(--yellow)} .q-dot.q4{background:var(--red)}
+
+/* ── grid ── */
+.grid {
+  display:grid;
+  grid-template-columns:2fr 1fr 1fr 1fr;
+  grid-template-areas:
+    "ts   ts   ts   topo"
+    "fft  fft  spec topo"
+    "bp   eng  relax calm"
+    "acc  acc  hrppg ev"
+    "stab stab stab  stab";
+  gap:10px; padding:10px;
+}
+
+/* ── widget ── */
+.w { background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:11px; overflow:hidden; }
+.wt { font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase;
+      letter-spacing:.07em; margin-bottom:8px; }
+canvas { display:block; width:100%; }
+
+/* area assignments */
+.w-ts   { grid-area:ts; }
+.w-fft  { grid-area:fft; }
+.w-spec { grid-area:spec; }
+.w-topo { grid-area:topo; display:flex; flex-direction:column; align-items:center; }
+.w-bp   { grid-area:bp; }
+.w-eng  { grid-area:eng; }
+.w-relax{ grid-area:relax; }
+.w-calm { grid-area:calm; }
+.w-acc  { grid-area:acc; }
+.w-hr   { grid-area:hrppg; }
+.w-ev   { grid-area:ev; }
+.w-stab { grid-area:stab; transition:border-color .4s; }
+.w-stab.ready { border-color:var(--green); box-shadow:0 0 10px #3fb95033; }
+
+/* ── time series ── */
+.ts-ch { position:relative; margin-bottom:3px; }
+.ts-lb { position:absolute; left:3px; top:1px; font-size:10px; z-index:1; pointer-events:none; }
+
+/* ── band power ── */
+.bands { display:flex; flex-direction:column; gap:4px; }
+.b-row { display:flex; align-items:center; gap:5px; }
+.b-nm  { width:36px; font-size:10px; color:var(--muted); text-transform:capitalize; }
+.b-trk { flex:1; height:8px; background:var(--border2); border-radius:3px; overflow:hidden; }
+.b-fi  { height:100%; border-radius:3px; transition:width .12s; }
+.b-vl  { width:48px; text-align:right; font-size:10px; color:var(--muted); }
+.b-delta .b-fi{background:#6e7681} .b-theta .b-fi{background:var(--blue)}
+.b-alpha .b-fi{background:var(--green)} .b-beta  .b-fi{background:var(--yellow)}
+.b-gamma .b-fi{background:var(--red)}
+.fft-row { margin-top:6px; font-size:10px; color:var(--muted); line-height:1.7; }
+
+/* ── metric widget (focus/relax/calm) ── */
+.metric-num { font-size:28px; font-weight:700; line-height:1; margin:4px 0 2px; }
+.metric-label { font-size:10px; color:var(--muted); margin-bottom:6px; min-height:14px; }
+.gauge-track { height:8px; background:var(--border2); border-radius:3px; overflow:hidden; margin-bottom:4px; }
+.gauge-fill  { height:100%; border-radius:3px; transition:width .2s; }
+.sub { font-size:10px; color:var(--muted); }
+
+/* ── head topo ── */
+.topo-legend { display:flex; flex-direction:column; align-items:center; margin-top:6px; gap:2px; }
+.topo-bar { width:100px; height:7px; border-radius:3px;
+  background:linear-gradient(90deg,#000080,#0000ff,#00ffff,#00ff00,#ffff00,#ff0000); }
+.topo-sub { font-size:10px; color:var(--muted); display:flex; justify-content:space-between; width:100px; }
+
+/* ── accelerometer ── */
+.acc-ch { position:relative; margin-bottom:3px; }
+.acc-lb { position:absolute; left:3px; top:1px; font-size:10px; z-index:1; }
+
+/* ── HR/PPG ── */
+.hr-big { font-size:36px; font-weight:700; color:var(--orange); line-height:1; }
+.hr-unit{ font-size:11px; color:var(--muted); }
+.hr-sub { font-size:10px; color:var(--muted); margin-top:3px; }
+
+/* ── events ── */
+.ev-row { display:flex; align-items:center; gap:6px; margin-bottom:5px; }
+.ev-dot { width:10px; height:10px; border-radius:50%; background:#484f58; flex-shrink:0; transition:background .1s; }
+.ev-dot.on { box-shadow:0 0 6px currentColor; }
+.ev-nm  { font-size:11px; color:var(--muted); flex:1; }
+.ev-cnt { font-size:10px; color:var(--muted); }
+
+/* ── stability ── */
+.gates { display:flex; gap:14px; flex-wrap:wrap; }
+.gate  { display:flex; align-items:center; gap:5px; }
+.g-dot { width:8px; height:8px; border-radius:50%; background:#484f58; flex-shrink:0; transition:background .3s; }
+.g-dot.pass{background:var(--green)} .g-dot.fail{background:var(--red)}
+.g-lb  { font-size:11px; color:var(--muted); }
+.g-vl  { font-size:11px; color:var(--text); font-weight:600; }
+.prog-track { height:11px; background:var(--border2); border-radius:4px; overflow:hidden; margin:7px 0 3px; }
+#prog-fill  { height:100%; background:var(--green); border-radius:4px; width:0%; transition:width .5s; }
+.prog-labs  { display:flex; justify-content:space-between; font-size:10px; color:var(--muted); }
+#ready-banner { display:none; margin-top:9px; padding:8px; border-radius:5px;
+  background:#1a3a1a; border:1px solid var(--green); color:var(--green);
+  font-weight:700; font-size:13px; text-align:center;
+  animation:pulse 1.5s ease-in-out infinite; }
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+
+footer { padding:6px 16px; color:#484f58; font-size:10px; border-top:1px solid var(--border2); }
+</style>
+</head>
+<body>
+
+<header>
+  <div id="status-dot"></div>
+  <h1>Muse Live</h1>
+  <span id="status-label">connecting…</span>
+  <span class="hdr-sep">|</span>
+  <span id="sr-badge">– Hz</span>
+  <div class="hdr-right">
+    <div class="q-row">
+      <span class="q-ch"><div class="q-dot" id="q0"></div>TP9</span>
+      <span class="q-ch"><div class="q-dot" id="q1"></div>AF7</span>
+      <span class="q-ch"><div class="q-dot" id="q2"></div>AF8</span>
+      <span class="q-ch"><div class="q-dot" id="q3"></div>TP10</span>
+    </div>
+    <span id="touch-badge">headband</span>
+    <span id="batt-label">🔋 –</span>
+    <span id="bpm-badge">♥ – bpm</span>
+  </div>
+</header>
+
+<div class="grid">
+
+  <!-- TIME SERIES -->
+  <div class="w w-ts">
+    <div class="wt">Time Series (µV) — 4 s · HP 1 Hz · LP 50 Hz · Notch 60 Hz</div>
+    <div id="ts-wrap">
+      <div class="ts-ch"><span class="ts-lb" style="color:#58a6ff">TP9</span> <canvas id="ts0" height="52"></canvas></div>
+      <div class="ts-ch"><span class="ts-lb" style="color:#3fb950">AF7</span> <canvas id="ts1" height="52"></canvas></div>
+      <div class="ts-ch"><span class="ts-lb" style="color:#d29922">AF8</span> <canvas id="ts2" height="52"></canvas></div>
+      <div class="ts-ch"><span class="ts-lb" style="color:#f85149">TP10</span><canvas id="ts3" height="52"></canvas></div>
+    </div>
+  </div>
+
+  <!-- FFT SPECTRUM -->
+  <div class="w w-fft">
+    <div class="wt">FFT Spectrum — Hamming · 256-pt · exp α=0.2 · log µV²/Hz</div>
+    <canvas id="fft-cv" height="150"></canvas>
+    <div style="display:flex;gap:8px;margin-top:3px">
+      <span style="font-size:10px;color:#6e7681">▬δ</span>
+      <span style="font-size:10px;color:#58a6ff">▬θ</span>
+      <span style="font-size:10px;color:#3fb950">▬α</span>
+      <span style="font-size:10px;color:#d29922">▬β</span>
+      <span style="font-size:10px;color:#f85149">▬γ</span>
+      <span style="font-size:10px;color:#8b949e;margin-left:auto">0–50 Hz</span>
+    </div>
+  </div>
+
+  <!-- SPECTROGRAM -->
+  <div class="w w-spec">
+    <div class="wt">Spectrogram (AF7+AF8) — STFT · 30 s</div>
+    <canvas id="spec-cv" height="150"></canvas>
+    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:2px">
+      <span>0</span><span>25 Hz</span><span>50</span>
+    </div>
+  </div>
+
+  <!-- HEAD TOPO -->
+  <div class="w w-topo">
+    <div class="wt">Topo — alpha power</div>
+    <canvas id="topo-cv" width="170" height="170"></canvas>
+    <div class="topo-legend">
+      <div class="topo-bar"></div>
+      <div class="topo-sub"><span>low</span><span>high</span></div>
+    </div>
+  </div>
+
+  <!-- BAND POWER (Mind Monitor device values + FFT) -->
+  <div class="w w-bp">
+    <div class="wt">Band Power — device + FFT</div>
+    <div class="bands">
+      <div class="b-row b-delta"><span class="b-nm">delta</span><div class="b-trk"><div class="b-fi" id="bf-delta"></div></div><span class="b-vl" id="bv-delta">–</span></div>
+      <div class="b-row b-theta"><span class="b-nm">theta</span><div class="b-trk"><div class="b-fi" id="bf-theta"></div></div><span class="b-vl" id="bv-theta">–</span></div>
+      <div class="b-row b-alpha"><span class="b-nm">alpha</span><div class="b-trk"><div class="b-fi" id="bf-alpha"></div></div><span class="b-vl" id="bv-alpha">–</span></div>
+      <div class="b-row b-beta" ><span class="b-nm">beta</span> <div class="b-trk"><div class="b-fi" id="bf-beta" ></div></div><span class="b-vl" id="bv-beta" >–</span></div>
+      <div class="b-row b-gamma"><span class="b-nm">gamma</span><div class="b-trk"><div class="b-fi" id="bf-gamma"></div></div><span class="b-vl" id="bv-gamma">–</span></div>
+    </div>
+    <div class="fft-row">
+      FFT µV²: δ<span id="fd">–</span> θ<span id="ft">–</span> α<span id="fa">–</span> β<span id="fb">–</span> γ<span id="fg">–</span>
+    </div>
+    <canvas id="faa-cv" height="30" style="margin-top:6px"></canvas>
+    <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:1px">
+      <span>← L dominant</span><span id="faa-num">FAA –</span><span>R dominant →</span>
+    </div>
+  </div>
+
+  <!-- FOCUS / ENGAGEMENT  (OpenBCI W_Focus algorithm: β/(α+θ)) -->
+  <div class="w w-eng">
+    <div class="wt">Focus — β/(α+θ) · Pope 1995</div>
+    <div class="metric-num" id="eng-num" style="color:var(--blue)">–</div>
+    <div class="metric-label" id="eng-lbl">–</div>
+    <div class="gauge-track"><div class="gauge-fill" id="eng-fill"
+      style="background:linear-gradient(90deg,var(--blue),var(--cyan),var(--yellow),var(--red))"></div></div>
+    <div class="sub">0 ────────── 3+</div>
+    <canvas id="eng-trend" height="55" style="margin-top:6px"></canvas>
+    <div class="sub" style="margin-top:2px">30 s trend · frontal AF7+AF8</div>
+  </div>
+
+  <!-- RELAXATION  α/(α+β) frontal -->
+  <div class="w w-relax">
+    <div class="wt">Relaxation — α/(α+β)</div>
+    <div class="metric-num" id="rel-num" style="color:var(--green)">–</div>
+    <div class="metric-label" id="rel-lbl">–</div>
+    <div class="gauge-track"><div class="gauge-fill" id="rel-fill"
+      style="background:linear-gradient(90deg,var(--blue),var(--green))"></div></div>
+    <div class="sub">0 ──────── 1</div>
+    <canvas id="rel-trend" height="55" style="margin-top:6px"></canvas>
+    <div class="sub" style="margin-top:2px">30 s trend · frontal AF7+AF8</div>
+  </div>
+
+  <!-- CALM / MEDITATION  (α+θ)/β frontal -->
+  <div class="w w-calm">
+    <div class="wt">Calm — (α+θ)/β</div>
+    <div class="metric-num" id="calm-num" style="color:var(--purple)">–</div>
+    <div class="metric-label" id="calm-lbl">–</div>
+    <div class="gauge-track"><div class="gauge-fill" id="calm-fill"
+      style="background:linear-gradient(90deg,var(--purple),var(--cyan))"></div></div>
+    <div class="sub">0 ────────── 5+</div>
+    <canvas id="calm-trend" height="55" style="margin-top:6px"></canvas>
+    <div class="sub" style="margin-top:2px">30 s trend · frontal AF7+AF8</div>
+  </div>
+
+  <!-- ACCELEROMETER (OpenBCI W_Accelerometer: X/Y/Z, 5 s window, auto-scale) -->
+  <div class="w w-acc">
+    <div class="wt">Accelerometer — X Y Z (g) · 5 s window · auto-scale</div>
+    <div class="acc-ch"><span class="acc-lb" style="color:#f85149">X</span><canvas id="acc0" height="42"></canvas></div>
+    <div class="acc-ch"><span class="acc-lb" style="color:#3fb950">Y</span><canvas id="acc1" height="42"></canvas></div>
+    <div class="acc-ch"><span class="acc-lb" style="color:#58a6ff">Z</span><canvas id="acc2" height="42"></canvas></div>
+    <div style="font-size:10px;color:var(--muted);margin-top:3px" id="acc-vals">x – y – z –</div>
+  </div>
+
+  <!-- HR / PPG  (OpenBCI W_PulseSensor: FFT peak in 0.7–3.5 Hz on optics IR channel) -->
+  <div class="w w-hr">
+    <div class="wt">Heart Rate — FFT on PPG IR · /muse/optics[1]</div>
+    <div style="display:flex;align-items:baseline;gap:6px">
+      <div class="hr-big" id="hr-num">–</div>
+      <div class="hr-unit">bpm</div>
+    </div>
+    <div class="hr-sub" id="hr-conf">waiting for signal…</div>
+    <canvas id="hr-trend" height="60" style="margin-top:6px"></canvas>
+    <div class="sub" style="margin-top:2px">30 s HR trend</div>
+    <canvas id="ppg-cv" height="38" style="margin-top:5px"></canvas>
+    <div class="sub" style="margin-top:2px">raw PPG IR waveform (AC)</div>
+  </div>
+
+  <!-- EVENTS -->
+  <div class="w w-ev">
+    <div class="wt">Events — /muse/elements</div>
+    <div class="ev-row">
+      <div class="ev-dot" id="ev-blink" style="background:var(--blue)"></div>
+      <span class="ev-nm">Blink</span>
+      <span class="ev-cnt" id="ev-blink-cnt">0</span>
+    </div>
+    <div class="ev-row">
+      <div class="ev-dot" id="ev-jaw" style="background:var(--orange)"></div>
+      <span class="ev-nm">Jaw Clench</span>
+      <span class="ev-cnt" id="ev-jaw-cnt">0</span>
+    </div>
+    <div class="ev-row">
+      <div class="ev-dot" id="ev-touch" style="background:var(--green)"></div>
+      <span class="ev-nm">Touching Forehead</span>
+    </div>
+    <div style="margin-top:10px;font-size:10px;color:var(--muted)">FAA baseline snapshot</div>
+    <div style="font-size:11px;color:var(--text);margin-top:3px" id="faa-snap">–</div>
+  </div>
+
+  <!-- SIGNAL STABILITY -->
+  <div class="w w-stab" id="stab-card">
+    <div class="wt">Signal Stability Check — required before experiment</div>
+    <div class="gates">
+      <div class="gate"><div class="g-dot" id="g-elec"></div>
+        <span class="g-lb">Electrodes ≤2</span><span class="g-vl" id="gv-elec">–</span></div>
+      <div class="gate"><div class="g-dot" id="g-cv"></div>
+        <span class="g-lb">Alpha CV &lt;0.25</span><span class="g-vl" id="gv-cv">warming…</span></div>
+      <div class="gate"><div class="g-dot" id="g-rail"></div>
+        <span class="g-lb">Not railing &lt;1000 µV</span>
+        <span class="g-vl" id="gv-rail">–</span>
+        <span id="blink-suppress" style="display:none;font-size:10px;color:var(--blue);margin-left:4px">👁 blink suppressed</span></div>
+    </div>
+    <div class="prog-track"><div id="prog-fill"></div></div>
+    <div class="prog-labs"><span id="prog-time">0 s</span><span>need 15 s clean</span></div>
+    <div id="ready-banner">✓ SIGNAL STABLE — START EXPERIMENT NOW</div>
+  </div>
+
+</div>
+
+<footer>ws://localhost:8765 · Mind Monitor OSC → 192.168.1.9:5000</footer>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════
+const N_CH = 4;
+const CH_NAMES  = ["TP9","AF7","AF8","TP10"];
+const CH_COLORS = ["#58a6ff","#3fb950","#d29922","#f85149"];
+const BANDS     = ["delta","theta","alpha","beta","gamma"];
+const BAND_HZ   = [[0.5,4],[4,8],[8,13],[13,32],[32,50]];  // OpenBCI GUI definitions
+const BAND_COLS = ["#6e7681","#58a6ff","#3fb950","#d29922","#f85149"];
+
+let FS      = 256;
+const NFFT  = 256;   // 256 pts @ 256 Hz → 1 Hz/bin
+const TS_S  = 4;
+const RING  = FS * 6;
+
+// ═══════════════════════════════════════════════════════
+// BIQUAD FILTER (Butterworth)
+// ═══════════════════════════════════════════════════════
+class Biquad {
+  constructor(b0,b1,b2,a1,a2){ this.b=[b0,b1,b2]; this.a=[a1,a2]; this.x=[0,0]; this.y=[0,0]; }
+  tick(x0){
+    const y0=this.b[0]*x0+this.b[1]*this.x[0]+this.b[2]*this.x[1]-this.a[0]*this.y[0]-this.a[1]*this.y[1];
+    this.x[1]=this.x[0];this.x[0]=x0;this.y[1]=this.y[0];this.y[0]=y0;
+    return isFinite(y0)?y0:0;
+  }
+}
+function bwHP(fc,fs){ const K=Math.tan(Math.PI*fc/fs),n=1/(1+Math.SQRT2*K+K*K);
+  return new Biquad(n,-2*n,n,2*(K*K-1)*n,(1-Math.SQRT2*K+K*K)*n); }
+function bwLP(fc,fs){ const K=Math.tan(Math.PI*fc/fs),n=1/(1+Math.SQRT2*K+K*K),b=K*K*n;
+  return new Biquad(b,2*b,b,2*(K*K-1)*n,(1-Math.SQRT2*K+K*K)*n); }
+function bwNotch(f0,bw,fs){ const K=Math.tan(Math.PI*bw/fs),n=1/(1+K),c=-2*Math.cos(2*Math.PI*f0/fs);
+  return new Biquad(n,c*n,n,c*n,(1-K)*n); }
+
+function makeChain(fs){ return {hp:bwHP(1,fs),lp:bwLP(50,fs),n60:bwNotch(60,1,fs)}; }
+let chains = Array.from({length:N_CH},()=>makeChain(FS));
+function filt(ch,x){ return chains[ch].n60.tick(chains[ch].lp.tick(chains[ch].hp.tick(x))); }
+
+// ═══════════════════════════════════════════════════════
+// FFT (Cooley-Tukey radix-2)
+// ═══════════════════════════════════════════════════════
+function fftIP(re,im){
+  const N=re.length;
+  for(let i=1,j=0;i<N;i++){let b=N>>1;for(;j&b;b>>=1)j^=b;j^=b;if(i<j){[re[i],re[j]]=[re[j],re[i]];[im[i],im[j]]=[im[j],im[i]];}}
+  for(let len=2;len<=N;len<<=1){const a=-2*Math.PI/len,wR=Math.cos(a),wI=Math.sin(a);
+    for(let i=0;i<N;i+=len){let uR=1,uI=0;for(let j=0;j<len/2;j++){
+      const tR=uR*re[i+j+len/2]-uI*im[i+j+len/2],tI=uR*im[i+j+len/2]+uI*re[i+j+len/2];
+      re[i+j+len/2]=re[i+j]-tR;im[i+j+len/2]=im[i+j]-tI;re[i+j]+=tR;im[i+j]+=tI;
+      const nR=uR*wR-uI*wI;uI=uR*wI+uI*wR;uR=nR;}}}
+}
+// Hamming window
+const HAM=new Float32Array(NFFT); let hamPow=0;
+for(let i=0;i<NFFT;i++){HAM[i]=0.54-0.46*Math.cos(2*Math.PI*i/(NFFT-1));hamPow+=HAM[i]*HAM[i];}
+
+// Smoothed PSD per EEG channel
+const psd=Array.from({length:N_CH},()=>new Float64Array(NFFT/2+1));
+const SA=0.2;  // exponential smooth factor (OpenBCI default)
+
+// EEG ring buffers (filtered)
+let rings=Array.from({length:N_CH},()=>new Float32Array(FS*6));
+let rHead=0,rCount=0;
+
+function computeFFT(){
+  const half=NFFT/2;
+  for(let ch=0;ch<N_CH;ch++){
+    const re=new Float64Array(NFFT),im=new Float64Array(NFFT);
+    for(let i=0;i<NFFT;i++){const idx=(rHead-NFFT+i+rings[ch].length)%rings[ch].length;re[i]=rings[ch][idx]*HAM[i];}
+    fftIP(re,im);
+    for(let k=0;k<=half;k++){
+      let p=2*(re[k]*re[k]+im[k]*im[k])/(FS*hamPow);
+      if(k===0||k===half)p/=2;
+      psd[ch][k]=SA*p+(1-SA)*psd[ch][k];
+    }
+  }
+}
+
+function bpFFT(ch,lo,hi){ // band power from FFT in µV²
+  let s=0;
+  const kL=Math.floor(lo*NFFT/FS),kH=Math.ceil(hi*NFFT/FS);
+  for(let k=kL;k<=Math.min(kH,NFFT/2);k++)s+=psd[ch][k];
+  return s*(FS/NFFT);
+}
+
+function frontalAvg(fn){
+  return (fn(1)+fn(2))*0.5; // AF7=ch1, AF8=ch2
+}
+
+// ═══════════════════════════════════════════════════════
+// SPECTROGRAM
+// ═══════════════════════════════════════════════════════
+const SCOLS=300,SROWS=50;
+const specBuf=Array.from({length:SCOLS},()=>new Float32Array(SROWS));
+let sCol=0,sCnt=0,fftTick=0;
+const FFT_EVERY=10; // run FFT every N EEG samples
+
+function pushSpec(){
+  const c=sCol%SCOLS;
+  for(let r=0;r<SROWS;r++) specBuf[c][r]=(psd[1][r]+psd[2][r])*0.5;
+  sCol++;sCnt++;
+}
+
+// ═══════════════════════════════════════════════════════
+// METRIC TRENDS (30-second at 25 fps = 750 samples)
+// ═══════════════════════════════════════════════════════
+const TREND=750;
+const trends={eng:new Float32Array(TREND),rel:new Float32Array(TREND),calm:new Float32Array(TREND),hr:new Float32Array(TREND)};
+const tHeads={eng:0,rel:0,calm:0,hr:0};
+
+function pushTrend(k,v){ trends[k][tHeads[k]%TREND]=v; tHeads[k]++; }
+
+// ═══════════════════════════════════════════════════════
+// PPG / HR (frequency-domain BPM from optics IR channel)
+// Muse 2 PPG sample rate = 64 Hz (separate from EEG 256 Hz)
+// Algorithm: FFT on 8 s buffer → dominant peak 42–180 BPM
+// ═══════════════════════════════════════════════════════
+const PPG_FS  = 64;    // Muse 2 PPG hardware rate (NOT the EEG rate)
+const PPG_LEN = 512;   // 8 s @ 64 Hz → 0.125 Hz/bin resolution
+const ppgRing = new Float32Array(PPG_LEN);
+let ppgHead=0, ppgCount=0;
+
+const PPG_HAM=new Float32Array(PPG_LEN); let ppgHamPow=0;
+for(let i=0;i<PPG_LEN;i++){PPG_HAM[i]=0.54-0.46*Math.cos(2*Math.PI*i/(PPG_LEN-1));ppgHamPow+=PPG_HAM[i]*PPG_HAM[i];}
+
+let hrSmooth=0, hrValid=false;
+let engSmooth=0, relSmooth=0, calmSmooth=0, metricInit=false;
+const MSMT=0.08; // metric smoothing — slow (8% new per frame ≈ ~3s settle at 25fps)
+
+// AC display waveform (bandpass filtered)
+const PPG_DISP=200;
+const ppgDisp=new Float32Array(PPG_DISP);
+let ppgDispHead=0;
+const ppgHP=bwHP(0.5,PPG_FS), ppgLP=bwLP(4,PPG_FS);
+
+// Estimate actual PPG sample rate from incoming chunk sizes
+let ppgSrSamples=0, ppgSrT0=Date.now();
+let ppgSrEst=PPG_FS;
+
+function pushPPG(irVal){
+  ppgDisp[ppgDispHead%PPG_DISP]=ppgLP.tick(ppgHP.tick(irVal));
+  ppgDispHead++;
+  ppgRing[ppgHead%PPG_LEN]=irVal;
+  ppgHead++; ppgCount++;
+  ppgSrSamples++;
+  const elapsed=(Date.now()-ppgSrT0)/1000;
+  if(elapsed>3){ ppgSrEst=Math.round(ppgSrSamples/elapsed); ppgSrSamples=0; ppgSrT0=Date.now(); }
+}
+
+function computeHR(){
+  if(ppgCount<PPG_LEN) return 0;
+  const n=PPG_LEN, fs=ppgSrEst||PPG_FS;
+  const re=new Float64Array(n), im=new Float64Array(n);
+  let mu=0;
+  for(let i=0;i<n;i++){const idx=(ppgHead-n+i+n)%n; mu+=ppgRing[idx];}
+  mu/=n;
+  for(let i=0;i<n;i++){const idx=(ppgHead-n+i+n)%n; re[i]=(ppgRing[idx]-mu)*PPG_HAM[i];}
+  fftIP(re,im);
+  // search 42–180 BPM = 0.7–3.0 Hz
+  const kL=Math.max(1,Math.round(0.7*n/fs)), kH=Math.min(n/2-1,Math.round(3.0*n/fs));
+  let bestK=kL, bestP=0;
+  for(let k=kL;k<=kH;k++){const p=re[k]*re[k]+im[k]*im[k];if(p>bestP){bestP=p;bestK=k;}}
+  return (bestK*fs/n)*60;
+}
+
+let hrTick=0;
+const HR_EVERY=PPG_FS; // recompute once per second of PPG data
+
+// ═══════════════════════════════════════════════════════
+// ACCELEROMETER RING (5 s at ~52 Hz from Mind Monitor)
+// ═══════════════════════════════════════════════════════
+const ACC_LEN=300;
+const accRings=[new Float32Array(ACC_LEN),new Float32Array(ACC_LEN),new Float32Array(ACC_LEN)];
+let accHead=0,accCount=0;
+
+// ═══════════════════════════════════════════════════════
+// HEAD TOPO
+// ═══════════════════════════════════════════════════════
+const ELEC=[[-0.72,0],[-0.35,0.65],[0.35,0.65],[0.72,0]]; // TP9,AF7,AF8,TP10
+function jetColor(t){
+  t=Math.max(0,Math.min(1,t));
+  const s=[[0,0,128],[0,0,255],[0,255,255],[0,255,0],[255,255,0],[255,0,0]];
+  const fi=t*(s.length-1),lo=Math.floor(fi),hi=Math.min(lo+1,s.length-1),fr=fi-lo;
+  return s[lo].map((c,i)=>Math.round(c+(s[hi][i]-c)*fr));
+}
+function drawTopo(cv,vals){
+  const W=cv.width,H=cv.height,cx=W/2,cy=H/2,R=W/2-4;
+  const ctx=cv.getContext("2d");
+  const img=ctx.createImageData(W,H);const d=img.data;
+  const mn=Math.min(...vals),mx=Math.max(...vals),rng=mx-mn||1;
+  for(let py=0;py<H;py++){for(let px=0;px<W;px++){
+    const nx=(px-cx)/R,ny=(cy-py)/R;
+    if(nx*nx+ny*ny>1) continue;
+    let ws=0,vs=0;
+    for(let e=0;e<4;e++){const dx=nx-ELEC[e][0],dy=ny-ELEC[e][1],d2=dx*dx+dy*dy;
+      const w=d2<1e-6?1e9:1/(d2*d2*d2);ws+=w;vs+=w*vals[e];}
+    const [r,g,b]=jetColor((vs/ws-mn)/rng);
+    const i=(py*W+px)*4;d[i]=r;d[i+1]=g;d[i+2]=b;d[i+3]=220;
+  }}
+  ctx.putImageData(img,0,0);
+  ctx.strokeStyle="#30363d";ctx.lineWidth=2;ctx.beginPath();ctx.arc(cx,cy,R,0,2*Math.PI);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(cx-7,4);ctx.lineTo(cx,0);ctx.lineTo(cx+7,4);ctx.strokeStyle="#484f58";ctx.lineWidth=1.5;ctx.stroke();
+  ELEC.forEach(([ex,ey],i)=>{
+    const px=cx+ex*R,py=cy-ey*R;
+    ctx.beginPath();ctx.arc(px,py,5,0,2*Math.PI);ctx.fillStyle=CH_COLORS[i];ctx.fill();
+    ctx.fillStyle="#fff";ctx.font="9px monospace";ctx.fillText(CH_NAMES[i],px+6,py+3);
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// CANVAS DRAW HELPERS
+// ═══════════════════════════════════════════════════════
+function drawWave(cv,buf,head,total,color,nShow){
+  const W=cv.clientWidth||cv.width,H=cv.height;cv.width=W;
+  const ctx=cv.getContext("2d");ctx.clearRect(0,0,W,H);
+  const n=Math.min(nShow||total,total);if(n<2)return;
+  const samps=new Float32Array(n);
+  for(let i=0;i<n;i++)samps[i]=buf[(head-n+i+buf.length)%buf.length];
+  let mn=Infinity,mx=-Infinity;samps.forEach(v=>{if(v<mn)mn=v;if(v>mx)mx=v;});
+  const rng=Math.max(mx-mn,10);mn-=rng*.08;mx+=rng*.08;
+  const zy=H-(0-mn)/(mx-mn)*H;
+  ctx.strokeStyle="#21262d";ctx.lineWidth=.5;ctx.beginPath();ctx.moveTo(0,zy);ctx.lineTo(W,zy);ctx.stroke();
+  ctx.strokeStyle=color;ctx.lineWidth=1.2;ctx.beginPath();
+  samps.forEach((v,i)=>{const x=i/(n-1)*W,y=H-(v-mn)/(mx-mn)*H;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
+  ctx.stroke();
+}
+
+function drawFFTCanvas(cv){
+  const W=cv.clientWidth||cv.width,H=cv.height;cv.width=W;
+  const ctx=cv.getContext("2d");ctx.clearRect(0,0,W,H);
+  const maxHz=50,maxBin=Math.floor(maxHz*NFFT/FS);
+  let all=[];
+  for(let ch=0;ch<N_CH;ch++)for(let k=1;k<=maxBin;k++)if(psd[ch][k]>0)all.push(Math.log10(psd[ch][k]));
+  if(all.length<2)return;
+  all.sort((a,b)=>a-b);
+  const yMin=all[Math.floor(all.length*.01)],yMax=all[Math.floor(all.length*.99)],yR=yMax-yMin||1;
+  const bShd=[{lo:.5,hi:4,c:"#6e768122"},{lo:4,hi:8,c:"#58a6ff22"},{lo:8,hi:13,c:"#3fb95022"},{lo:13,hi:32,c:"#d2992222"},{lo:32,hi:50,c:"#f8514922"}];
+  bShd.forEach(({lo,hi,c})=>{ctx.fillStyle=c;ctx.fillRect(lo/maxHz*W,0,(hi-lo)/maxHz*W,H);});
+  [10,20,30,40].forEach(hz=>{
+    const x=hz/maxHz*W;ctx.strokeStyle="#21262d";ctx.lineWidth=.5;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();
+    ctx.fillStyle="#484f58";ctx.font="9px monospace";ctx.fillText(hz,x+2,H-2);
+  });
+  for(let ch=0;ch<N_CH;ch++){
+    ctx.strokeStyle=CH_COLORS[ch]+"99";ctx.lineWidth=1.2;ctx.beginPath();
+    for(let k=1;k<=maxBin;k++){const x=k/maxBin*W,lp=psd[ch][k]>0?Math.log10(psd[ch][k]):yMin;
+      const y=H-(lp-yMin)/yR*H;k===1?ctx.moveTo(x,y):ctx.lineTo(x,y);}
+    ctx.stroke();
+  }
+}
+
+function drawSpec(cv){
+  const W=cv.clientWidth||cv.width,H=cv.height;cv.width=W;
+  const ctx=cv.getContext("2d");ctx.clearRect(0,0,W,H);
+  const nc=Math.min(sCnt,SCOLS),cW=W/SCOLS,rH=H/SROWS;
+  let gmn=Infinity,gmx=-Infinity;
+  for(let c=0;c<nc;c++){const ci=(sCol-nc+c+SCOLS)%SCOLS;
+    for(let r=0;r<SROWS;r++){const v=Math.log10(specBuf[ci][r]+1e-12);if(v<gmn)gmn=v;if(v>gmx)gmx=v;}}
+  const gr=gmx-gmn||1;
+  for(let c=0;c<nc;c++){const ci=(sCol-nc+c+SCOLS)%SCOLS,x=c*cW;
+    for(let r=0;r<SROWS;r++){
+      const y=H-(r+1)*rH;const t=(Math.log10(specBuf[ci][r]+1e-12)-gmn)/gr;
+      const [rr,gg,bb]=jetColor(t);ctx.fillStyle=`rgb(${rr},${gg},${bb})`;ctx.fillRect(x,y,cW+1,rH+1);}
+  }
+}
+
+function drawTrend(cv,key,yMax,color){
+  const W=cv.clientWidth||cv.width,H=cv.height;cv.width=W;
+  const ctx=cv.getContext("2d");ctx.clearRect(0,0,W,H);
+  const n=Math.min(tHeads[key],TREND);if(n<2)return;
+  ctx.strokeStyle="#21262d";ctx.lineWidth=.5;
+  [yMax*0.33,yMax*0.67].forEach(v=>{
+    const y=H-v/yMax*H;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();
+  });
+  ctx.strokeStyle=color;ctx.lineWidth=1.4;ctx.beginPath();
+  for(let i=0;i<n;i++){
+    const idx=(tHeads[key]-n+i+TREND)%TREND;
+    const x=i/(n-1)*W,y=H-Math.min(trends[key][idx]/yMax,1)*H;
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+}
+
+function drawFAA(cv,faa){
+  const W=cv.clientWidth||cv.width,H=cv.height;cv.width=W;
+  const ctx=cv.getContext("2d");ctx.clearRect(0,0,W,H);
+  const mid=W/2;
+  ctx.fillStyle="#21262d";ctx.fillRect(0,H*.2,W,H*.6);
+  ctx.fillStyle="#484f58";ctx.fillRect(mid-.5,0,1,H);
+  const pct=Math.min(Math.max(faa/2+.5,0),1);
+  if(faa>=0){
+    ctx.fillStyle="#3fb950";ctx.fillRect(mid,H*.2,(pct-.5)*W,H*.6);
+  } else {
+    ctx.fillStyle="#58a6ff";ctx.fillRect(pct*W,H*.2,(.5-pct)*W,H*.6);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// EVENT FLASH
+// ═══════════════════════════════════════════════════════
+let blinkCount=0,jawCount=0;
+function flashEl(id,color,ms){
+  const el=document.getElementById(id);if(!el)return;
+  el.style.background=color;el.classList.add("on");
+  setTimeout(()=>{el.style.background="#484f58";el.classList.remove("on");},ms||400);
+}
+
+// ═══════════════════════════════════════════════════════
+// STABILITY
+// ═══════════════════════════════════════════════════════
+let alertedOnce=false;
+function updateStability(s){
+  const gd=id=>document.getElementById(id);
+  function gate(id,pass){const el=gd(id);if(el)el.className="g-dot "+(pass?"pass":"fail");}
+  gate("g-elec",s.all_electrodes_ok);gate("g-cv",s.alpha_cv_ok);gate("g-rail",s.not_railing);
+  const ve=gd("gv-elec");if(ve)ve.textContent=s.all_electrodes_ok?"OK":"BAD";
+  const vr=gd("gv-rail");if(vr)vr.textContent=s.not_railing?"OK":"RAILING";
+  const bs=gd("blink-suppress");if(bs)bs.style.display=s.blink_suppressed?"inline":"none";
+  const vc=gd("gv-cv");if(vc){
+    if(s.alpha_cv_af7===null){vc.textContent="warming…";}
+    else{vc.textContent=`${s.alpha_cv_af7.toFixed(3)}/${s.alpha_cv_af8.toFixed(3)}`;vc.style.color=s.alpha_cv_ok?"var(--green)":"var(--red)";}
+  }
+  const pf=gd("prog-fill");if(pf)pf.style.width=Math.min(s.clean_secs/s.required_secs*100,100)+"%";
+  const pt=gd("prog-time");if(pt)pt.textContent=`${s.clean_secs.toFixed(1)} s`;
+  const banner=gd("ready-banner");if(banner)banner.style.display=s.ready?"block":"none";
+  const card=gd("stab-card");if(card)card.className="w w-stab"+(s.ready?" ready":"");
+  if(s.ready&&!alertedOnce){
+    alertedOnce=true;
+    try{const ac=new AudioContext(),o=ac.createOscillator(),g=ac.createGain();
+      o.connect(g);g.connect(ac.destination);o.frequency.value=440;
+      g.gain.setValueAtTime(.25,ac.currentTime);g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+1);
+      o.start();o.stop(ac.currentTime+1);}catch(e){}
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// MAIN UPDATE
+// ═══════════════════════════════════════════════════════
+let prevBlink=0,prevJaw=0;
+const HR_FRAMES=25; // recompute HR every ~1 s at 25 fps
+let hrFrameTick=0;
+const m=id=>document.getElementById(id);
+
+function onData(d){
+  // header
+  m("status-dot").className="live";
+  m("status-label").textContent="live";
+  if(d.sr)m("sr-badge").textContent=`${d.sr} Hz`;
+  if(d.batt>=0)m("batt-label").textContent=`🔋 ${Math.round(d.batt)}%`;
+
+  // touching forehead
+  const tb=m("touch-badge");
+  if(tb){tb.textContent=d.touching?"on forehead":"headband";tb.className=d.touching?"on":"";}
+
+  // signal quality
+  [0,1,2,3].forEach(i=>{const el=m("q"+i);if(el){const v=(d.horseshoe||[4,4,4,4])[i];el.className="q-dot "+(v<=1?"q1":v<=2?"q2":"q4");}});
+
+  // events — server sends incrementing counters, display them directly
+  if(d.blink!==prevBlink){m("ev-blink-cnt").textContent=d.blink;if(d.blink>prevBlink)flashEl("ev-blink","var(--blue)");prevBlink=d.blink;}
+  if(d.jaw_clench!==prevJaw){m("ev-jaw-cnt").textContent=d.jaw_clench;if(d.jaw_clench>prevJaw)flashEl("ev-jaw","var(--orange)");prevJaw=d.jaw_clench;}
+  const etDot=m("ev-touch");if(etDot)etDot.style.background=d.touching?"var(--green)":"#484f58";
+
+  // ── EEG: push chunk through filter → ring buffer ──
+  if(d.sr&&d.sr!==FS){
+    FS=d.sr;rings=Array.from({length:N_CH},()=>new Float32Array(FS*6));
+    chains=Array.from({length:N_CH},()=>makeChain(FS));rHead=0;rCount=0;
+  }
+  const chunk=d.eeg_buf&&d.eeg_buf.length?d.eeg_buf:[(d.eeg||[0,0,0,0])];
+  chunk.forEach(s=>{
+    for(let ch=0;ch<N_CH;ch++)rings[ch][rHead%rings[ch].length]=filt(ch,s[ch]||0);
+    rHead++;rCount=Math.min(rCount+1,rings[0].length);
+    if(++fftTick>=FFT_EVERY){fftTick=0;computeFFT();pushSpec();}
+  });
+
+  // ── PPG: push optics buffer ──
+  // push PPG samples — use index 1 (IR), fall back to 0
+  const obufs=d.optics_buf&&d.optics_buf.length?d.optics_buf:[(d.optics||[0,0,0])];
+  obufs.forEach(os=>{ const v=os[1]!=null?os[1]:os[0]; pushPPG(v||0); });
+
+  // recompute HR once per second (every HR_FRAMES WS frames)
+  if(++hrFrameTick>=HR_FRAMES){
+    hrFrameTick=0;
+    const bpm=computeHR();
+    const conf=m("hr-conf");
+    if(bpm>=42&&bpm<=180){
+      hrSmooth=hrSmooth?hrSmooth*.8+bpm*.2:bpm; hrValid=true;
+      pushTrend("hr",hrSmooth);
+      m("hr-num").textContent=Math.round(hrSmooth);
+      m("bpm-badge").textContent=`♥ ${Math.round(hrSmooth)} bpm`;
+      if(conf)conf.textContent=`FFT peak ${bpm.toFixed(1)} bpm · est SR ${ppgSrEst} Hz`;
+    } else if(bpm>0){
+      if(conf)conf.textContent=`FFT: ${bpm.toFixed(1)} bpm out of range · SR est ${ppgSrEst} Hz`;
+    }
+  }
+  // PPG display
+  const ppgCv=m("ppg-cv");if(ppgCv)drawWave(ppgCv,ppgDisp,ppgDispHead%PPG_DISP,PPG_DISP,"#f97316",PPG_DISP);
+  // HR trend
+  const htCv=m("hr-trend");if(htCv&&hrValid)drawTrend(htCv,"hr",200,"#f97316");
+
+  // ── accelerometer ──
+  const acc=d.acc||[0,0,0];
+  acc.forEach((v,i)=>{accRings[i][accHead%ACC_LEN]=v;});
+  accHead++;accCount=Math.min(accCount+1,ACC_LEN);
+  const acv=m("acc-vals");if(acv)acv.textContent=`x ${acc[0].toFixed(3)}g  y ${acc[1].toFixed(3)}g  z ${acc[2].toFixed(3)}g`;
+  const accCols=["#f85149","#3fb950","#58a6ff"];
+  [0,1,2].forEach(i=>{const cv=m("acc"+i);if(cv)drawWave(cv,accRings[i],accHead%ACC_LEN,accCount,accCols[i]);});
+
+  // ── time series ──
+  const nShow=Math.floor(FS*TS_S);
+  for(let ch=0;ch<N_CH;ch++){const cv=m("ts"+ch);if(cv)drawWave(cv,rings[ch],rHead%rings[ch].length,rCount,CH_COLORS[ch],nShow);}
+
+  // ── FFT canvas ──
+  const fc=m("fft-cv");if(fc)drawFFTCanvas(fc);
+
+  // ── spectrogram ──
+  const sc=m("spec-cv");if(sc)drawSpec(sc);
+
+  // ── head topo (alpha power) ──
+  const tc=m("topo-cv");if(tc)drawTopo(tc,(d.alpha||[0,0,0,0]).map(v=>Math.max(v,0)));
+
+  // ── band power (Mind Monitor device values — normalized) ──
+  const bvals=BANDS.map(b=>{const v=d[b]||[0,0,0,0];return v.reduce((a,x)=>a+x,0)/4;});
+  const bmax=Math.max(...bvals,0.001);
+  BANDS.forEach((b,i)=>{
+    const pct=Math.min(Math.max(bvals[i],0)/bmax*100,100);
+    const bf=m("bf-"+b),bv=m("bv-"+b);
+    if(bf)bf.style.width=pct+"%";if(bv)bv.textContent=bvals[i].toFixed(3);
+  });
+
+  // FFT-computed band powers (µV²)
+  const fftB=BAND_HZ.map(([lo,hi])=>(bpFFT(1,lo,hi)+bpFFT(2,lo,hi))*.5);
+  ["fd","ft","fa","fb","fg"].forEach((id,i)=>{const el=m(id);if(el)el.textContent=" "+fftB[i].toFixed(1)+" ";});
+
+  // ── FAA (Mind Monitor alpha values, log) ──
+  const a=d.alpha||[0,0,0,0];
+  let faa=0;
+  if(a[2]>0&&a[1]>0){faa=Math.log(a[2])-Math.log(a[1]);}
+  const fn=m("faa-num");if(fn)fn.textContent=`FAA ${faa.toFixed(3)}`;
+  const fc2=m("faa-cv");if(fc2)drawFAA(fc2,faa);
+  const fsn=m("faa-snap");if(fsn)fsn.textContent=faa>=0?`+${faa.toFixed(3)} right dominant`:`${faa.toFixed(3)} left dominant`;
+
+  // ── metrics (from FFT band powers) ──
+  const tF=(bpFFT(1,4,8) +bpFFT(2,4,8)) *.5;
+  const aF=(bpFFT(1,8,13)+bpFFT(2,8,13))*.5;
+  const bF=(bpFFT(1,13,30)+bpFFT(2,13,30))*.5;
+
+  // Focus: β/(α+θ)  [Pope 1995]
+  const engRaw=tF+aF>0?bF/(tF+aF):0;
+  engSmooth=metricInit?MSMT*engRaw+(1-MSMT)*engSmooth:engRaw;
+  pushTrend("eng",engSmooth);
+  m("eng-num").textContent=engSmooth.toFixed(2);
+  m("eng-fill").style.width=Math.min(engSmooth/3*100,100)+"%";
+  m("eng-lbl").textContent=engSmooth<.5?"relaxed / drowsy":engSmooth<1.2?"moderate":engSmooth<2?"engaged":"high engagement";
+  const etCv=m("eng-trend");if(etCv)drawTrend(etCv,"eng",3,"#58a6ff");
+
+  // Relaxation: α/(α+β)
+  const relRaw=aF+bF>0?aF/(aF+bF):0;
+  relSmooth=metricInit?MSMT*relRaw+(1-MSMT)*relSmooth:relRaw;
+  pushTrend("rel",relSmooth);
+  m("rel-num").textContent=relSmooth.toFixed(2);
+  m("rel-fill").style.width=Math.min(relSmooth*100,100)+"%";
+  m("rel-lbl").textContent=relSmooth<.3?"active / tense":relSmooth<.5?"neutral":relSmooth<.7?"relaxed":"very relaxed";
+  const rtCv=m("rel-trend");if(rtCv)drawTrend(rtCv,"rel",1,"#3fb950");
+
+  // Calm / Meditation: (α+θ)/β
+  const calmRaw=bF>0?(aF+tF)/bF:0;
+  calmSmooth=metricInit?MSMT*calmRaw+(1-MSMT)*calmSmooth:calmRaw;
+  metricInit=true;
+  pushTrend("calm",calmSmooth);
+  m("calm-num").textContent=calmSmooth.toFixed(2);
+  m("calm-fill").style.width=Math.min(calmSmooth/5*100,100)+"%";
+  m("calm-lbl").textContent=calmSmooth<.5?"alert / active":calmSmooth<1.5?"neutral":calmSmooth<3?"calm":"deeply relaxed";
+  const ctCv=m("calm-trend");if(ctCv)drawTrend(ctCv,"calm",5,"#bc8cff");
+
+  // stability
+  if(d.stability)updateStability(d.stability);
+}
+
+// ═══════════════════════════════════════════════════════
+// WEBSOCKET
+// ═══════════════════════════════════════════════════════
+let ws;
+function connect(){
+  ws=new WebSocket("ws://localhost:8765");
+  ws.onopen=()=>console.log("WS connected");
+  ws.onclose=()=>{m("status-dot").className="";m("status-label").textContent="reconnecting…";setTimeout(connect,2000);};
+  ws.onerror=()=>ws.close();
+  ws.onmessage=e=>{try{onData(JSON.parse(e.data));}catch(err){console.warn(err);}};
+}
+connect();
+</script>
+</body>
+</html>

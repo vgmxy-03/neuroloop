@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "OpenMuse"
+version = "0.1.8"
+description = "Record and Stream Muse S Athena signals with Python"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "bleak>=0.21.0",
+  "numpy>=1.24.0",
+  "pandas>=1.5.0",
+  "mne-lsl>=1.10.0",
+  "matplotlib>=3.5.0",
+  "vispy>=0.12.0",
+]
+authors = [{ name = "" }]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+[project.scripts]
+OpenMuse = "OpenMuse.cli:main"
+
+[tool.setuptools]
+packages = ["OpenMuse"]
